@@ -6,6 +6,7 @@ import {
   type MetaInboundRepository,
 } from "@/lib/meta/ingest";
 import {
+  getMetaWebhookChannel,
   MetaWebhookError,
   parseMetaWebhookPayload,
   verifyMetaChallenge,
@@ -181,6 +182,43 @@ test("Meta POST signatures validate exact raw payload and reject bad signatures"
   assert.throws(
     () => verifyMetaSignature(raw, null, undefined),
     (error: unknown) => error instanceof MetaWebhookError && error.code === "configuration",
+  );
+});
+
+test("Meta signature diagnostics distinguish rejection reasons and safe channel identity", () => {
+  const raw = Buffer.from(JSON.stringify(instagramPayload));
+  const secret = "test-app-secret";
+  const signature = `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`;
+
+  assert.deepEqual(verifyMetaSignatureWithReason(raw, null, secret), {
+    valid: false,
+    reason: "missing_header",
+  });
+  assert.deepEqual(verifyMetaSignatureWithReason(raw, "sha256=bad", secret), {
+    valid: false,
+    reason: "malformed_header",
+  });
+  assert.deepEqual(verifyMetaSignatureWithReason(raw, signature, "wrong-secret"), {
+    valid: false,
+    reason: "signature_mismatch",
+  });
+  assert.equal(getMetaWebhookChannel(JSON.parse(raw.toString("utf8"))), "instagram");
+  assert.equal(getMetaWebhookChannel({ object: "unsupported" }), null);
+  assert.equal(getMetaWebhookChannel(null), null);
+});
+
+test("Meta HMAC-SHA256 matches a fixed raw-body vector and rejects a wrong secret", () => {
+  const raw = Buffer.from('{"object":"instagram","entry":[]}');
+  const signature =
+    "sha256=bb441adf604237753804d2f51dbef920e26f17e8c1155dbe818684eb2b577890";
+
+  assert.deepEqual(
+    verifyMetaSignatureWithReason(raw, signature, "test-app-secret"),
+    { valid: true },
+  );
+  assert.deepEqual(
+    verifyMetaSignatureWithReason(raw, signature, "wrong-app-secret"),
+    { valid: false, reason: "signature_mismatch" },
   );
 });
 

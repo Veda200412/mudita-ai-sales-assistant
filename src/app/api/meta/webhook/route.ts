@@ -6,6 +6,7 @@ import {
 } from "@/lib/meta/ingest";
 import {
   MetaWebhookError,
+  getMetaWebhookChannel,
   parseMetaWebhookPayload,
   verifyMetaChallenge,
   verifyMetaSignatureWithReason,
@@ -67,9 +68,18 @@ export async function POST(request: Request) {
       process.env.META_APP_SECRET,
     );
     if (!signatureResult.valid) {
-      console.warn("[meta-webhook] Signature rejected", {
+      let channel: "instagram" | "whatsapp" | undefined = undefined;
+      try {
+        channel =
+          getMetaWebhookChannel(JSON.parse(rawBody.toString("utf8")) as unknown) ??
+          undefined;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+      console.warn(JSON.stringify({
         reason: signatureResult.reason,
-      });
+        ...(channel ? { channel } : {}),
+      }));
       return NextResponse.json({ error: "Meta webhook signature is invalid." }, { status: 401 });
     }
     let payload: unknown;
@@ -78,16 +88,7 @@ export async function POST(request: Request) {
     } catch {
       throw new MetaWebhookError("payload", "Webhook body must be valid JSON.");
     }
-    const object =
-      typeof payload === "object" && payload !== null && "object" in payload
-        ? payload.object
-        : null;
-    const channel =
-      object === "instagram"
-        ? "instagram"
-        : object === "whatsapp_business_account"
-          ? "whatsapp"
-          : null;
+    const channel = getMetaWebhookChannel(payload);
     if (!channel) {
       throw new MetaWebhookError("payload", "Unsupported Meta webhook object.");
     }
