@@ -208,7 +208,8 @@ export function verifyMetaSignatureWithReason(
   valid: false;
   reason: "missing_header" | "malformed_header" | "signature_mismatch";
 } {
-  if (!appSecret?.trim()) {
+  const normalizedAppSecret = appSecret?.trim();
+  if (!normalizedAppSecret) {
     throw new MetaWebhookError(
       "configuration",
       "Set META_APP_SECRET to enable Meta webhook signature verification.",
@@ -218,48 +219,10 @@ export function verifyMetaSignatureWithReason(
   if (!/^sha256=[a-f0-9]{64}$/i.test(signatureHeader)) {
     return { valid: false, reason: "malformed_header" };
   }
-  const expected = createHmac("sha256", appSecret).update(rawBody).digest();
+  const expected = createHmac("sha256", normalizedAppSecret).update(rawBody).digest();
   const provided = Buffer.from(signatureHeader.slice(7), "hex");
   return provided.length === expected.length && timingSafeEqual(provided, expected)
     ? { valid: true }
-    : { valid: false, reason: "signature_mismatch" };
-}
-
-export function verifyMetaSignatureForChannels(
-  rawBody: string | Uint8Array,
-  signatureHeader: string | null,
-  secrets: {
-    instagram: string | undefined;
-    whatsapp: string | undefined;
-  },
-): { valid: true; matchedChannels: Array<"instagram" | "whatsapp"> } | {
-  valid: false;
-  reason: "missing_header" | "malformed_header" | "signature_mismatch";
-} {
-  const configuredSecrets = (
-    Object.entries(secrets) as Array<["instagram" | "whatsapp", string | undefined]>
-  ).filter((entry): entry is ["instagram" | "whatsapp", string] => Boolean(entry[1]?.trim()));
-  if (configuredSecrets.length === 0) {
-    throw new MetaWebhookError(
-      "configuration",
-      "Set META_APP_SECRET or a channel-specific Meta app secret to enable signature verification.",
-    );
-  }
-  if (!signatureHeader) return { valid: false, reason: "missing_header" };
-  if (!/^sha256=[a-f0-9]{64}$/i.test(signatureHeader)) {
-    return { valid: false, reason: "malformed_header" };
-  }
-
-  const provided = Buffer.from(signatureHeader.slice(7), "hex");
-  const matchedChannels: Array<"instagram" | "whatsapp"> = [];
-  for (const [source, secret] of configuredSecrets) {
-    const expected = createHmac("sha256", secret).update(rawBody).digest();
-    if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
-      matchedChannels.push(source);
-    }
-  }
-  return matchedChannels.length > 0
-    ? { valid: true, matchedChannels }
     : { valid: false, reason: "signature_mismatch" };
 }
 

@@ -10,7 +10,6 @@ import {
   parseMetaWebhookPayload,
   verifyMetaChallenge,
   verifyMetaSignature,
-  verifyMetaSignatureForChannels,
   verifyMetaSignatureWithReason,
   type MetaInboundMessage,
 } from "@/lib/meta/webhook";
@@ -164,6 +163,7 @@ test("Meta POST signatures validate exact raw payload and reject bad signatures"
   const signature = createHmac("sha256", secret).update(raw).digest("hex");
   assert.equal(verifyMetaSignature(raw, `sha256=${signature}`, secret), true);
   assert.equal(verifyMetaSignature(Buffer.from(raw), `sha256=${signature}`, secret), true);
+  assert.equal(verifyMetaSignature(Buffer.from(raw), `sha256=${signature}`, ` ${secret} `), true);
   assert.equal(verifyMetaSignature(raw + " ", `sha256=${signature}`, secret), false);
   assert.equal(verifyMetaSignature(raw, "sha256=bad", secret), false);
   assert.deepEqual(verifyMetaSignatureWithReason(raw, null, secret), {
@@ -180,40 +180,6 @@ test("Meta POST signatures validate exact raw payload and reject bad signatures"
   );
   assert.throws(
     () => verifyMetaSignature(raw, null, undefined),
-    (error: unknown) => error instanceof MetaWebhookError && error.code === "configuration",
-  );
-});
-
-test("signature verification checks independent app secrets against exact raw bytes", () => {
-  const raw = Buffer.from(JSON.stringify(instagramPayload, null, 2));
-  const instagramSecret = "instagram-app-secret";
-  const whatsappSecret = "whatsapp-app-secret";
-  const signature = `sha256=${createHmac("sha256", instagramSecret).update(raw).digest("hex")}`;
-  const result = verifyMetaSignatureForChannels(raw, signature, {
-    instagram: instagramSecret,
-    whatsapp: whatsappSecret,
-  });
-  assert.deepEqual(result, { valid: true, matchedChannels: ["instagram"] });
-
-  assert.deepEqual(
-    verifyMetaSignatureForChannels(raw, signature, {
-      instagram: "wrong-instagram-secret",
-      whatsapp: whatsappSecret,
-    }),
-    { valid: false, reason: "signature_mismatch" },
-  );
-  assert.deepEqual(
-    verifyMetaSignatureForChannels(raw, signature, {
-      instagram: instagramSecret,
-      whatsapp: whatsappSecret,
-    }),
-    { valid: true, matchedChannels: ["instagram"] },
-  );
-  assert.throws(
-    () => verifyMetaSignatureForChannels(raw, signature, {
-      instagram: undefined,
-      whatsapp: undefined,
-    }),
     (error: unknown) => error instanceof MetaWebhookError && error.code === "configuration",
   );
 });
