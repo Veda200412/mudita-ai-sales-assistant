@@ -8,7 +8,7 @@ import {
   MetaWebhookError,
   parseMetaWebhookPayload,
   verifyMetaChallenge,
-  verifyMetaSignatureWithReason,
+  verifyMetaSignatureForChannels,
 } from "@/lib/meta/webhook";
 import { createMetaWebhookRepository, MetaWebhookDatabaseError } from "@/lib/meta/repository";
 import { QualificationError } from "@/lib/qualification";
@@ -61,6 +61,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Webhook payload is too large." }, { status: 413 });
     }
 
+    const instagramSecret = process.env.META_INSTAGRAM_APP_SECRET?.trim()
+      ? process.env.META_INSTAGRAM_APP_SECRET
+      : process.env.META_APP_SECRET;
+    const whatsappSecret = process.env.META_WHATSAPP_APP_SECRET?.trim()
+      ? process.env.META_WHATSAPP_APP_SECRET
+      : process.env.META_APP_SECRET;
+    const signatureResult = verifyMetaSignatureForChannels(
+      rawBody,
+      request.headers.get("x-hub-signature-256"),
+      {
+        instagram: instagramSecret,
+        whatsapp: whatsappSecret,
+      },
+    );
+    if (!signatureResult.valid) {
+      console.warn("[meta-webhook] Signature rejected", {
+        reason: signatureResult.reason,
+      });
+      return NextResponse.json({ error: "Meta webhook signature is invalid." }, { status: 401 });
+    }
     let payload: unknown;
     try {
       payload = JSON.parse(rawBody.toString("utf8")) as unknown;
@@ -80,22 +100,12 @@ export async function POST(request: Request) {
     if (!channel) {
       throw new MetaWebhookError("payload", "Unsupported Meta webhook object.");
     }
-    const channelAppSecret =
-      channel === "instagram"
-        ? process.env.META_INSTAGRAM_APP_SECRET
-        : process.env.META_WHATSAPP_APP_SECRET;
-    const appSecret = channelAppSecret?.trim()
-      ? channelAppSecret
-      : process.env.META_APP_SECRET;
-    const signatureResult = verifyMetaSignatureWithReason(
-      rawBody,
-      request.headers.get("x-hub-signature-256"),
-      appSecret,
-    );
-    if (!signatureResult.valid) {
+    if (
+      !signatureResult.matchedChannels.includes(channel)
+    ) {
       console.warn("[meta-webhook] Signature rejected", {
         channel,
-        reason: signatureResult.reason,
+        reason: "signature_channel_mismatch",
       });
       return NextResponse.json({ error: "Meta webhook signature is invalid." }, { status: 401 });
     }
