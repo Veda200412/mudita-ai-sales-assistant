@@ -10,6 +10,7 @@ import {
   parseMetaWebhookPayload,
   verifyMetaChallenge,
   verifyMetaSignature,
+  verifyMetaSignatureWithReason,
   type MetaInboundMessage,
 } from "@/lib/meta/webhook";
 
@@ -161,12 +162,72 @@ test("Meta POST signatures validate exact raw payload and reject bad signatures"
   const secret = "test-app-secret";
   const signature = createHmac("sha256", secret).update(raw).digest("hex");
   assert.equal(verifyMetaSignature(raw, `sha256=${signature}`, secret), true);
+  assert.equal(verifyMetaSignature(Buffer.from(raw), `sha256=${signature}`, secret), true);
   assert.equal(verifyMetaSignature(raw + " ", `sha256=${signature}`, secret), false);
   assert.equal(verifyMetaSignature(raw, "sha256=bad", secret), false);
+  assert.deepEqual(verifyMetaSignatureWithReason(raw, null, secret), {
+    valid: false,
+    reason: "missing_header",
+  });
+  assert.deepEqual(verifyMetaSignatureWithReason(raw, "sha256=bad", secret), {
+    valid: false,
+    reason: "malformed_header",
+  });
+  assert.deepEqual(
+    verifyMetaSignatureWithReason(raw, `sha256=${signature}`, "different-app-secret"),
+    { valid: false, reason: "signature_mismatch" },
+  );
   assert.throws(
     () => verifyMetaSignature(raw, null, undefined),
     (error: unknown) => error instanceof MetaWebhookError && error.code === "configuration",
   );
+});
+
+test("valid signed Meta payloads persist; invalid signatures never reach ingestion", async () => {
+  const raw = JSON.stringify(instagramPayload);
+  const secret = "instagram-app-secret";
+  const signature = `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`;
+  const store = makeRepository();
+  const extractFacts = async () => ({
+    requestedService: null,
+    budgetInr: null,
+    businessUseCase: null,
+    genuineBusinessUseCase: null,
+    evidence: {
+      service: null,
+      budgetInr: null,
+      businessUseCase: null,
+      genuineBusinessUseCase: null,
+    },
+  });
+
+  const valid = verifyMetaSignatureWithReason(
+    Buffer.from(raw),
+    signature,
+    secret,
+  );
+  assert.equal(valid.valid, true);
+  if (valid.valid) {
+    const messages = parseMetaWebhookPayload(JSON.parse(raw) as unknown, "instagram");
+    const result = await ingestMetaMessages({
+      messages,
+      repository: store.repository,
+      apiKey: "test-key",
+      extractFacts,
+    });
+    assert.deepEqual(result, { received: 1, imported: 1, duplicates: 0 });
+  }
+  assert.equal(store.messages.size, 1);
+  assert.equal(store.leads.size, 1);
+
+  const invalid = verifyMetaSignatureWithReason(
+    Buffer.from(raw),
+    signature,
+    "different-app-secret",
+  );
+  assert.equal(invalid.valid, false);
+  assert.equal(store.messages.size, 1);
+  assert.equal(store.leads.size, 1);
 });
 
 test("Instagram messages parse sender and account-scoped conversation identifiers", () => {

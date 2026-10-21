@@ -7,7 +7,7 @@
 | Google Calendar | OAuth/API and booking flow implemented; not verified against a live calendar | Configure Google Cloud OAuth and a test calendar, then manually verify availability, confirmation, and duplicate handling |
 | Instagram / WhatsApp | Inbound webhook code implemented; not connected or live-verified | Configure Meta app/accounts, permissions, public HTTPS webhook, and verify actual messages |
 | Gmail | OAuth/API integration implemented; not verified against a live mailbox | Configure Google Cloud OAuth and server-only Gmail variables; connect a test mailbox and verify local sync |
-| Vercel | Not deployed | Configure deployment and server-only environment variables |
+| Vercel | Deployed | Configure Production environment variables and redeploy after changes |
 
 The health route does not use privileged credentials. Customer data routes require a valid Supabase Auth access token and an active representative link before the server-only admin client is used. Gmail's read-only integration is implemented but has not been verified against a live mailbox. No email is sent or auto-replied to.
 
@@ -53,12 +53,14 @@ For historical Gmail leads, the dashboard provides **Preview cleanup**. It reuse
 
 ## Instagram and WhatsApp inbound webhooks
 
-Both inbound channels use `POST /api/meta/webhook` and the same server-side Meta app secret. GET verification uses `META_VERIFY_TOKEN`; POST authenticity is checked against Meta's `X-Hub-Signature-256` HMAC-SHA256 header over the exact raw request body. A missing secret rejects POST requests. A missing/mismatched verify token rejects GET verification. Expose this route through a public HTTPS URL for Meta; for local tests use a trusted HTTPS tunnel and set its exact callback URL in the Meta developer console.
+Both inbound channels use `POST /api/meta/webhook`. GET verification uses `META_VERIFY_TOKEN`; POST authenticity is checked against Meta's `X-Hub-Signature-256` HMAC-SHA256 header over the exact raw request bytes (`sha256=<64 hex characters>`). If Instagram and WhatsApp are products on the same Meta app, they use that app's same App Secret. If they are connected through different Meta apps, configure the corresponding channel-specific secrets below. A missing secret rejects POST requests. A missing/mismatched verify token rejects GET verification. Expose this route through a public HTTPS URL for Meta; for local tests use a trusted HTTPS tunnel and set its exact callback URL in the Meta developer console.
 
 Required server variables:
 
 ```dotenv
 META_APP_SECRET=<Meta app secret>
+META_INSTAGRAM_APP_SECRET=<optional Instagram app secret override>
+META_WHATSAPP_APP_SECRET=<optional WhatsApp app secret override>
 META_VERIFY_TOKEN=<random value you choose and enter in Meta webhook setup>
 GEMINI_API_KEY=<server-side Gemini key>
 NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
@@ -68,13 +70,15 @@ SUPABASE_SERVICE_ROLE_KEY=<server-only Supabase service role key>
 
 `META_APP_ID` identifies the app in Meta setup but is not needed by this inbound webhook implementation. `META_ACCESS_TOKEN` is included for future server-side Graph API calls; inbound-only processing does not call Graph API or require that token. Never put any Meta secret/access token in browser variables or source control.
 
+For one Meta app serving both products, set only `META_APP_SECRET` to the value from **App settings → Basic**. For separate Meta apps, set `META_INSTAGRAM_APP_SECRET` and `META_WHATSAPP_APP_SECRET` to their respective app secrets; either channel-specific value overrides `META_APP_SECRET` for that channel. Set the variables in Vercel's Production environment and redeploy. The handler logs only the channel and a safe signature rejection category (missing header, malformed header, or mismatch), never the signature or secret.
+
 ### Instagram Messaging
 
 1. Use a Meta developer app with the Messenger API for Instagram / Instagram Messaging product enabled.
 2. Use an Instagram **Professional** account (Business or Creator) connected to the appropriate Facebook Page for the selected Meta login product.
 3. Configure the product's message permissions (for the Facebook Login/Messenger API flow this includes `instagram_manage_messages`, `instagram_basic`, and the required Page webhook/subscription permissions such as `pages_manage_metadata`). Meta may require app review and business verification before users outside development/test roles can use the integration.
 4. Subscribe the app to the Instagram `messages` webhook field. In **Webhooks**, set callback to `https://<your-host>/api/meta/webhook`, enter the same random value as `META_VERIFY_TOKEN`, and subscribe the Instagram object to `messages`.
-5. Set `META_APP_SECRET` from **App settings → Basic** in the server `.env.local`, configure the verify token, restart the app, and complete Meta's GET verification.
+5. Set `META_APP_SECRET` from **App settings → Basic** in the server `.env.local` (or `META_INSTAGRAM_APP_SECRET` if this product belongs to a separate app), configure the verify token, restart the app, and complete Meta's GET verification.
 
 The handler ignores echoes, stores incoming Instagram provider message IDs, and scopes conversation mapping to recipient-account ID plus sender ID. It does not send replies or retrieve media.
 
@@ -82,7 +86,7 @@ The handler ignores echoes, stores incoming Instagram provider message IDs, and 
 
 1. Add the **WhatsApp** product to the Meta app, create/select a WhatsApp Business Account (WABA), and attach a registered business phone number. Meta's test WABA/test number can be used during development; production messaging may require business verification and number approval.
 2. In **Webhooks**, use the same callback URL `https://<your-host>/api/meta/webhook` and `META_VERIFY_TOKEN`; subscribe the `whatsapp_business_account` object to the `messages` field and subscribe the app to the WABA.
-3. Set `META_APP_SECRET` and `META_VERIFY_TOKEN` server-side. A Cloud API system-user/access token is not used for inbound webhook verification or storage; `META_ACCESS_TOKEN` is intentionally optional while the app sends no messages. Keep any issued token server-side.
+3. Set `META_APP_SECRET` and `META_VERIFY_TOKEN` server-side (or `META_WHATSAPP_APP_SECRET` if this product belongs to a separate app). A Cloud API system-user/access token is not used for inbound webhook verification or storage; `META_ACCESS_TOKEN` is intentionally optional while the app sends no messages. Keep any issued token server-side.
 4. For local testing, expose `localhost:3000` over a trusted public HTTPS tunnel and configure that exact URL in Meta. Restart `npm run dev` after changing environment variables.
 
 The handler stores incoming WhatsApp message IDs and scopes each conversation by phone-number ID plus sender ID. Text and interactive reply text are qualified; media-only events are retained as follow-up with explicit missing-content evidence. No reply is sent.
