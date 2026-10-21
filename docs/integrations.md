@@ -70,7 +70,7 @@ SUPABASE_SERVICE_ROLE_KEY=<server-only Supabase service role key>
 
 `META_APP_ID` identifies the app in Meta setup but is not needed by this inbound webhook implementation. `META_ACCESS_TOKEN` is included for future server-side Graph API calls; inbound-only processing does not call Graph API or require that token. Never put any Meta secret/access token in browser variables or source control.
 
-For one Meta app serving both products, set only `META_APP_SECRET` to the value from **App settings → Basic**. For separate Meta apps, set `META_INSTAGRAM_APP_SECRET` and `META_WHATSAPP_APP_SECRET` to their respective app secrets; either channel-specific value overrides `META_APP_SECRET` for that channel. Set the variables in Vercel's Production environment and redeploy. The handler logs only the channel and a safe signature rejection category (missing header, malformed header, or mismatch), never the signature or secret.
+For one Meta app serving both products, set only `META_APP_SECRET` to the value from **App settings → Basic**. For separate Meta apps, set `META_INSTAGRAM_APP_SECRET` and `META_WHATSAPP_APP_SECRET` to their respective app secrets; a non-empty channel-specific value takes precedence over `META_APP_SECRET` for that channel. Set the variables in Vercel's Production environment and redeploy. The handler validates the raw request bytes before parsing JSON, then checks that the secret that matched is configured for the parsed channel. It logs only safe rejection categories (missing header, malformed header, signature mismatch, or channel mismatch), never the signature or secret.
 
 ### Instagram Messaging
 
