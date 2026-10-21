@@ -193,22 +193,36 @@ export function parseMetaWebhookPayload(
 }
 
 export function verifyMetaSignature(
-  rawBody: string,
+  rawBody: string | Uint8Array,
   signatureHeader: string | null,
   appSecret: string | undefined,
 ): boolean {
+  return verifyMetaSignatureWithReason(rawBody, signatureHeader, appSecret).valid;
+}
+
+export function verifyMetaSignatureWithReason(
+  rawBody: string | Uint8Array,
+  signatureHeader: string | null,
+  appSecret: string | undefined,
+): { valid: true } | {
+  valid: false;
+  reason: "missing_header" | "malformed_header" | "signature_mismatch";
+} {
   if (!appSecret?.trim()) {
     throw new MetaWebhookError(
       "configuration",
       "Set META_APP_SECRET to enable Meta webhook signature verification.",
     );
   }
-  if (!signatureHeader || !/^sha256=[a-f0-9]{64}$/i.test(signatureHeader)) {
-    return false;
+  if (!signatureHeader) return { valid: false, reason: "missing_header" };
+  if (!/^sha256=[a-f0-9]{64}$/i.test(signatureHeader)) {
+    return { valid: false, reason: "malformed_header" };
   }
   const expected = createHmac("sha256", appSecret).update(rawBody).digest();
   const provided = Buffer.from(signatureHeader.slice(7), "hex");
-  return provided.length === expected.length && timingSafeEqual(provided, expected);
+  return provided.length === expected.length && timingSafeEqual(provided, expected)
+    ? { valid: true }
+    : { valid: false, reason: "signature_mismatch" };
 }
 
 export function verifyMetaChallenge(input: {

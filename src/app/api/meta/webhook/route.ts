@@ -8,7 +8,7 @@ import {
   MetaWebhookError,
   parseMetaWebhookPayload,
   verifyMetaChallenge,
-  verifyMetaSignature,
+  verifyMetaSignatureWithReason,
 } from "@/lib/meta/webhook";
 import { createMetaWebhookRepository, MetaWebhookDatabaseError } from "@/lib/meta/repository";
 import { QualificationError } from "@/lib/qualification";
@@ -34,6 +34,9 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     if (error instanceof MetaWebhookError) {
+      console.warn("[meta-webhook] Request rejected", {
+        category: error.code,
+      });
       return NextResponse.json(
         { error: error.message },
         { status: error.code === "configuration" ? 503 : 403 },
@@ -53,22 +56,14 @@ export async function POST(request: Request) {
     if (contentLength > maximumBodyBytes) {
       return NextResponse.json({ error: "Webhook payload is too large." }, { status: 413 });
     }
-    const rawBody = await request.text();
-    if (new TextEncoder().encode(rawBody).byteLength > maximumBodyBytes) {
+    const rawBody = Buffer.from(await request.arrayBuffer());
+    if (rawBody.byteLength > maximumBodyBytes) {
       return NextResponse.json({ error: "Webhook payload is too large." }, { status: 413 });
     }
-    if (
-      !verifyMetaSignature(
-        rawBody,
-        request.headers.get("x-hub-signature-256"),
-        process.env.META_APP_SECRET,
-      )
-    ) {
-      return NextResponse.json({ error: "Meta webhook signature is invalid." }, { status: 401 });
-    }
+
     let payload: unknown;
     try {
-      payload = JSON.parse(rawBody) as unknown;
+      payload = JSON.parse(rawBody.toString("utf8")) as unknown;
     } catch {
       throw new MetaWebhookError("payload", "Webhook body must be valid JSON.");
     }
@@ -85,6 +80,25 @@ export async function POST(request: Request) {
     if (!channel) {
       throw new MetaWebhookError("payload", "Unsupported Meta webhook object.");
     }
+    const channelAppSecret =
+      channel === "instagram"
+        ? process.env.META_INSTAGRAM_APP_SECRET
+        : process.env.META_WHATSAPP_APP_SECRET;
+    const appSecret = channelAppSecret?.trim()
+      ? channelAppSecret
+      : process.env.META_APP_SECRET;
+    const signatureResult = verifyMetaSignatureWithReason(
+      rawBody,
+      request.headers.get("x-hub-signature-256"),
+      appSecret,
+    );
+    if (!signatureResult.valid) {
+      console.warn("[meta-webhook] Signature rejected", {
+        channel,
+        reason: signatureResult.reason,
+      });
+      return NextResponse.json({ error: "Meta webhook signature is invalid." }, { status: 401 });
+    }
     const messages = parseMetaWebhookPayload(payload, channel);
     if (messages.length === 0) {
       return NextResponse.json({ received: 0, imported: 0, duplicates: 0 });
@@ -99,6 +113,9 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof MetaWebhookError) {
+      console.warn("[meta-webhook] Request rejected", {
+        category: error.code,
+      });
       return NextResponse.json(
         { error: error.message },
         {
